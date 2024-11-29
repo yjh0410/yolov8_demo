@@ -122,7 +122,10 @@ class DFL(nn.Module):
     def forward(self, x):
         """Applies a transformer layer on input tensor 'x' and returns a tensor."""
         b, c, a = x.shape  # batch, channels, anchors
-        return self.conv(x.view(b, 4, self.c1, a).transpose(2, 1).softmax(1)).view(b, 4, a)
+        # reshape: [bs, c, m] -> [bs, 4, reg_max, a] -> [bs, reg_max, 4, a]
+        x = x.view(b, 4, self.c1, a).transpose(2, 1)
+        x = F.softmax(x, dim=1)
+        return self.conv(x).view(b, 4, a) # [bs, 4, a]
 
 class Detect(nn.Module):
     anchors = torch.empty(0)  # init
@@ -213,7 +216,11 @@ class Segment(Detect):
         self.detect = Detect.forward
 
         c4 = max(ch[0] // 4, self.nm)
-        self.cv4 = nn.ModuleList(nn.Sequential(Conv(x, c4, 3), Conv(c4, c4, 3), nn.Conv2d(c4, self.nm, 1)) for x in ch)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(ConvModule(x, c4, kernel_size=3),
+                          ConvModule(c4, c4, kernel_size=3),
+                          nn.Conv2d(c4, self.nm, kernel_size=1))
+                          for x in ch)
 
     def forward(self, x):
         """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""

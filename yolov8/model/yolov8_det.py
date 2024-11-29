@@ -31,13 +31,28 @@ class Yolov8Detector(nn.Module):
         self.model = nn.ModuleList([
             ConvModule(3, int(64 * width), kernel_size=3, stride=2), # layer-0
             ConvModule(int(64 * width), int(128 * width), kernel_size=3, stride=2), # layer-1
-            YoloStage(int(128 * width), int(128 * width), num_blocks=int(3 * depth), shortcut=True), # layer-2
+            YoloStage(in_dim     = int(128 * width),
+                      out_dim    = int(128 * width),
+                      num_blocks = int(3 * depth),
+                      shortcut   = True,
+                      ), # layer-2
             ConvModule(int(128 * width), int(256 * width), kernel_size=3, stride=2), # layer-3
-            YoloStage(int(256 * width), int(256 * width), num_blocks=int(6 * depth), shortcut=True), # layer-4
+            YoloStage(in_dim     = int(256 * width),
+                      out_dim    = int(256 * width),
+                      num_blocks = int(6 * depth),
+                      shortcut   = True,
+                      ), # layer-4
             ConvModule(int(256 * width), int(512 * width), kernel_size=3, stride=2), # layer-5
-            YoloStage(int(512 * width), int(512 * width), num_blocks=int(6 * depth), shortcut=True), # layer-6
+            YoloStage(in_dim     = int(512 * width),
+                      out_dim    = int(512 * width),
+                      num_blocks = int(6 * depth),
+                      shortcut   = True,
+                      ), # layer-6
             ConvModule(int(512 * width), int(512 * width * ratio), kernel_size=3, stride=2), # layer-7
-            YoloStage(int(512 * width * ratio), int(512 * width * ratio), num_blocks=int(3 * depth), shortcut=True), # layer-8
+            YoloStage(in_dim     = int(512 * width * ratio),
+                      out_dim    = int(512 * width * ratio),
+                      num_blocks = int(3 * depth),
+                      shortcut   = True), # layer-8
             SPPF(int(512 * width * ratio), int(512 * width * ratio), spp_pooling_size=5, neck_expand_ratio=0.5), # layer-9
         ])
 
@@ -45,16 +60,32 @@ class Yolov8Detector(nn.Module):
         self.model.extend([
             Upsample(scale_factor=2.0, mode='nearest'), # layer-10
             Concat(dim=1), # layer-11
-            YoloStage(int(512 * width * ratio) + int(512 * width), int(512 * width), num_blocks=int(3 * depth), shortcut=False),  # layer-12
+            YoloStage(in_dim     = int(512 * width * ratio) + int(512 * width),
+                      out_dim    = int(512 * width),
+                      num_blocks = int(3 * depth),
+                      shortcut   = False,
+                      ),  # layer-12
             Upsample(scale_factor=2.0, mode='nearest'), # layer-13
             Concat(dim=1), # layer-14
-            YoloStage(int(512 * width) + int(256 * width), int(256 * width), num_blocks=int(3 * depth), shortcut=False),  # layer-15
+            YoloStage(in_dim     = int(512 * width) + int(256 * width),
+                      out_dim    = int(256 * width),
+                      num_blocks = int(3 * depth),
+                      shortcut   = False,
+                      ),  # layer-15
             ConvModule(int(256 * width), int(256 * width), kernel_size=3, stride=2), # layer-16
             Concat(dim=1), # layer-14
-            YoloStage(int(256 * width) + int(512 * width), int(512 * width), num_blocks=int(3 * depth), shortcut=False),  # layer-18
+            YoloStage(in_dim     = int(256 * width) + int(512 * width),
+                      out_dim    = int(512 * width),
+                      num_blocks = int(3 * depth),
+                      shortcut   = False,
+                      ),  # layer-18
             ConvModule(int(512 * width), int(512 * width), kernel_size=3, stride=2), # layer-19
             Concat(dim=1), # layer-20
-            YoloStage(int(512 * width) + int(512 * width * ratio), int(512 * width * ratio), num_blocks=int(3 * depth), shortcut=False),  # layer-21
+            YoloStage(in_dim     = int(512 * width) + int(512 * width * ratio),
+                      out_dim    = int(512 * width * ratio),
+                      num_blocks = int(3 * depth),
+                      shortcut   = False,
+                      ),  # layer-21
         ])
 
         # --------- Task Head ---------
