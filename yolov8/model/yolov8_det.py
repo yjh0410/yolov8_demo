@@ -90,7 +90,7 @@ class Yolov8Detector(nn.Module):
 
         # --------- Task Head ---------
         self.model.append(
-            Detect(nc=self.num_classes, ch=[int(256 * width), int(512 * width), int(512 * width * ratio)]),  # layer-22
+            Detect(num_classes=self.num_classes, ch=[int(256 * width), int(512 * width), int(512 * width * ratio)]),  # layer-22
         )
 
     def _forward_impl(self, x):

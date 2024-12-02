@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 from model.yolov8_det import Yolov8Detector
-from utils import post_process, val_transform, rescale_bboxes
+from utils import post_process_det, val_transform, scale_bboxes
 
 
 # COCO labels
@@ -35,11 +35,11 @@ for file_name in os.listdir("data"):
     score_preds = outputs[0, 4:, :].permute(1, 0)
 
     # post-process
-    bboxes, scores, labels = post_process(
+    bboxes, scores, labels = post_process_det(
         score_preds, xyxy_preds, conf_thresh=0.2, nms_thresh=0.5, num_classes=80)
 
     # rescale bboxes
-    bboxes = rescale_bboxes(bboxes, [img_w, img_h], ratio)
+    bboxes = scale_bboxes(bboxes, [img_w, img_h], ratio)
 
     # Color for beautiful visualization
     np.random.seed(0)

@@ -131,17 +131,17 @@ class Detect(nn.Module):
     anchors = torch.empty(0)  # init
     strides = torch.empty(0)  # init
 
-    def __init__(self, nc=80, ch=()):
+    def __init__(self, num_classes=80, ch=()):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
         super().__init__()
-        self.nc = nc  # number of classes
+        self.num_classes = num_classes  # number of classes
         self.nl = len(ch)  # number of detection layers
         self.reg_max = 16  # DFL channels (ch[0] // 16 to scale 4/8/12/16/20 for n/s/m/l/x)
-        self.no = nc + self.reg_max * 4  # number of outputs per anchor
+        self.no = num_classes + self.reg_max * 4  # number of outputs per anchor
         self.stride = [8, 16, 32]  # strides computed during build
         
         reg_dim = max((16, ch[0] // 4, self.reg_max * 4))
-        cls_dim = max(ch[0], min(self.nc, 100))
+        cls_dim = max(ch[0], min(self.num_classes, 100))
 
         self.cv2 = nn.ModuleList(
             nn.Sequential(ConvModule(x, reg_dim, kernel_size=3, stride=1),
@@ -152,7 +152,7 @@ class Detect(nn.Module):
         self.cv3 = nn.ModuleList(
             nn.Sequential(ConvModule(x, cls_dim, kernel_size=3, stride=1),
                           ConvModule(cls_dim, cls_dim, kernel_size=3, stride=1),
-                          nn.Conv2d(cls_dim, self.nc, 1))
+                          nn.Conv2d(cls_dim, self.num_classes, 1))
                           for x in ch)
         self.dfl = DFL(self.reg_max) if self.reg_max > 1 else nn.Identity()
 
@@ -187,7 +187,7 @@ class Detect(nn.Module):
         self.shape = shape
 
         # split cls output and reg outputs
-        box, cls = x_cat.split((self.reg_max * 4, self.nc), 1)
+        box, cls = x_cat.split((self.reg_max * 4, self.num_classes), 1)
 
         # decode box
         dist = self.dfl(box)
@@ -204,31 +204,49 @@ class Detect(nn.Module):
 
 
 # ----------------- YOLO segmentation head -----------------
-class Segment(Detect):
-    """YOLOv8 Segment head for segmentation models."""
+class Proto(nn.Module):
+    def __init__(self, in_dim: int, inter_dim: int = 256, out_dim: int = 32):
+        super().__init__()
+        self.cv1 = ConvModule(in_dim, inter_dim, kernel_size=3)
+        self.upsample = nn.ConvTranspose2d(inter_dim, inter_dim, kernel_size=2, stride=2, padding=0, bias=True)
+        self.cv2 = ConvModule(inter_dim, inter_dim, kernel_size=3)
+        self.cv3 = ConvModule(inter_dim, out_dim)
 
-    def __init__(self, nc=80, nm=32, npr=256, ch=()):
-        """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers."""
-        super().__init__(nc, ch)
-        self.nm = nm  # number of masks
+    def forward(self, x):
+        return self.cv3(self.cv2(self.upsample(self.cv1(x))))
+
+class Segment(Detect):
+    def __init__(self, num_classes: int = 80, num_masks: int = 32, npr: int = 256, ch=()):
+        super().__init__(num_classes, ch)
+        self.num_masks = num_masks    # number of masks
         self.npr = npr  # number of protos
-        self.proto = Proto(ch[0], self.npr, self.nm)  # protos
+        self.proto = Proto(ch[0], self.npr, self.num_masks)  # protos
         self.detect = Detect.forward
 
-        c4 = max(ch[0] // 4, self.nm)
+        c4 = max(ch[0] // 4, self.num_masks)
         self.cv4 = nn.ModuleList(
             nn.Sequential(ConvModule(x, c4, kernel_size=3),
                           ConvModule(c4, c4, kernel_size=3),
-                          nn.Conv2d(c4, self.nm, kernel_size=1))
+                          nn.Conv2d(c4, self.num_masks, kernel_size=1))
                           for x in ch)
 
     def forward(self, x):
-        """Return model outputs and mask coefficients if training, otherwise return outputs and mask coefficients."""
-        p = self.proto(x[0])  # mask protos
-        bs = p.shape[0]  # batch size
+        protos = self.proto(x[0])  # mask protos: [bs, nm, h, w]
 
-        mc = torch.cat([self.cv4[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)  # mask coefficients
-        x = self.detect(self, x)
-        if self.training:
-            return x, mc, p
-        return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
+        # ---------- Mask head output ----------
+        seg_out = []
+        for i in range(self.nl):
+            # [bs, nm, h, w] -> [bs, nm, hw]
+            mc_i = self.cv4[i](x[i]).flatten(2)
+            seg_out.append(mc_i)
+        # [bs, nm, m]
+        seg_out = torch.cat(seg_out, dim=2)
+
+        # ---------- BBox head output ----------
+        # [bs, 4+nc, m]
+        det_out = self.detect(self, x)
+
+        # [bs, 4 + nc + nm, m]
+        output = torch.cat([det_out, seg_out], dim=1)
+
+        return output, protos
