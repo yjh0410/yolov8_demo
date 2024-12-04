@@ -114,6 +114,52 @@ def post_process_seg(cls_preds: torch.Tensor,
     
     return bboxes, masks, scores, labels
 
+def post_process_pose(cls_preds: torch.Tensor,
+                     box_preds: torch.Tensor,
+                     pose_preds: torch.Tensor,
+                     conf_thresh: float = 0.2,
+                     nms_thresh: float = 0.45,
+                     num_classes:int = 80,
+                     ):
+    """
+    We process predictions at each scale hierarchically
+    Input:
+        cls_preds: torch.Tensor  -> [bs, m, nc], bs=1
+        box_preds: torch.Tensor  -> [bs, m, 4],  bs=1
+        pose_preds: torch.Tensor -> [bs, m, nm], bs=1
+    Output:
+        bboxes: np.array -> [N, 4]
+        scores: np.array -> [N,]
+        labels: np.array -> [N,]
+    """
+    
+    # [M,]
+    scores, labels = torch.max(cls_preds, dim=1)
+
+    # topk candidates
+    predicted_prob, topk_idxs = scores.sort(descending=True)
+
+    # filter out the proposals with low confidence score
+    keep_idxs = predicted_prob > conf_thresh
+    scores = predicted_prob[keep_idxs]
+    topk_idxs = topk_idxs[keep_idxs]
+
+    labels = labels[topk_idxs]
+    bboxes = box_preds[topk_idxs]
+    poses = pose_preds[topk_idxs]
+
+    # to cpu & numpy
+    scores = scores.cpu().numpy()  # [N,]
+    labels = labels.cpu().numpy()  # [N,]
+    bboxes = bboxes.cpu().numpy()  # [N, 4]
+    poses  = poses.cpu().numpy()   # [N, mask_dim]
+
+    # nms
+    scores, labels, bboxes, poses = multiclass_nms(
+        scores, labels, bboxes, poses, nms_thresh, num_classes)
+    
+    return bboxes, poses, scores, labels
+
 def stable_sigmoid(x):
     return np.where(x >= 0, 
                     1 / (1 + np.exp(-x)), 
@@ -183,6 +229,26 @@ def decode_masks(protos, masks_in, origin_size):
     masks_out = scale_masks(masks_out, origin_size)
 
     return masks_out
+
+def scale_keypoints(poses, origin_size, ratio, kdim=3):
+    """
+        Inputs:
+        - params: poses - np.ndarray or torch.Tensor with shape of [n, 4].
+        - params: origin_size - a list[w, h] of original image width and height.
+        - params: ratio - scaling factor.
+    """
+    # rescale poses
+    poses /= ratio
+
+    # clip poses
+    if isinstance(poses, np.ndarray):
+        poses[..., 0::kdim] = np.clip(poses[..., 0::kdim], a_min=0., a_max=origin_size[0])
+        poses[..., 1::kdim] = np.clip(poses[..., 1::kdim], a_min=0., a_max=origin_size[1])
+    elif isinstance(poses, torch.Tensor):
+        poses[..., 0::kdim] = torch.clamp(poses[..., 0::kdim], min=0., max=origin_size[0])
+        poses[..., 1::kdim] = torch.clamp(poses[..., 1::kdim], min=0., max=origin_size[1])
+
+    return poses
 
 
 # --------------------- NMS ops ---------------------

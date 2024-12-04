@@ -250,3 +250,53 @@ class Segment(Detect):
         output = torch.cat([det_out, seg_out], dim=1)
 
         return output, protos
+
+
+# ----------------- YOLO human pose head -----------------
+class Pose(Detect):
+    def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
+        super().__init__(nc, ch)
+        self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+        self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
+        self.detect = Detect.forward
+
+        c4 = max(ch[0] // 4, self.nk)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(ConvModule(x,  c4, kernel_size=3),
+                          ConvModule(c4, c4, kernel_size=3),
+                          nn.Conv2d(c4, self.nk, 1))
+                          for x in ch)
+
+    def forward(self, x):
+        # ---------- Pose head ----------
+        # [bs, 17*3, h*w]
+        kpt_out = []
+        for i in range(self.nl):
+            # [bc, nk, h, w] -> [bs, nk, hw]
+            kpt = self.cv4[i](x[i]).flatten(2)
+            kpt_out.append(kpt)
+        kpt_out = torch.cat(kpt_out, dim=2)
+        
+        # ---------- BBox head output ----------
+        # [bs, 4+nc, m]
+        det_out = self.detect(self, x)
+
+        # decode kpt results
+        kpt_out = self.kpts_decode(kpt_out)
+
+        # [bs, 4 + nc + nk, m]
+        output = torch.cat([det_out, kpt_out], dim=1)
+
+        return output
+
+    def kpts_decode(self, kpts):
+        ndim = self.kpt_shape[1]
+        y = kpts.clone()
+
+        if ndim == 3:
+            y[:, 2::3] = y[:, 2::3].sigmoid()  # sigmoid (WARNING: inplace .sigmoid_() Apple MPS bug)
+
+        y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
+        y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
+
+        return y
