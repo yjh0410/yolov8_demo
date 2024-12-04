@@ -297,6 +297,11 @@ class Detect(nn.Module):
 # ----------------- YOLO segmentation head -----------------
 class Proto(nn.Module):
     def __init__(self, in_dim: int, inter_dim: int = 256, out_dim: int = 32):
+        """
+        Initializes the YOLOv8 mask Proto module with specified number of protos and masks.
+
+        Input arguments are ch_in, number of protos, number of masks.
+        """
         super().__init__()
         self.cv1 = ConvModule(in_dim, inter_dim, kernel_size=3)
         self.upsample = nn.ConvTranspose2d(inter_dim, inter_dim, kernel_size=2, stride=2, padding=0, bias=True)
@@ -304,21 +309,23 @@ class Proto(nn.Module):
         self.cv3 = ConvModule(inter_dim, out_dim)
 
     def forward(self, x):
+        """Performs a forward pass through layers using an upsampled input image."""
         return self.cv3(self.cv2(self.upsample(self.cv1(x))))
 
 class Segment(Detect):
-    def __init__(self, num_classes: int = 80, num_masks: int = 32, npr: int = 256, ch=()):
-        super().__init__(num_classes, ch)
-        self.num_masks = num_masks    # number of masks
+    def __init__(self, nc=80, nm=32, npr=256, ch=()):
+        """Initialize the YOLO model attributes such as the number of masks, prototypes, and the convolution layers."""
+        super().__init__(nc, ch)
+        self.nm = nm    # number of masks
         self.npr = npr  # number of protos
-        self.proto = Proto(ch[0], self.npr, self.num_masks)  # protos
+        self.proto = Proto(ch[0], self.npr, self.nm)  # protos
         self.detect = Detect.forward
 
-        c4 = max(ch[0] // 4, self.num_masks)
+        c4 = max(ch[0] // 4, self.nm)
         self.cv4 = nn.ModuleList(
             nn.Sequential(ConvModule(x, c4, kernel_size=3),
                           ConvModule(c4, c4, kernel_size=3),
-                          nn.Conv2d(c4, self.num_masks, kernel_size=1))
+                          nn.Conv2d(c4, self.nm, kernel_size=1))
                           for x in ch)
 
     def forward(self, x):
@@ -341,3 +348,53 @@ class Segment(Detect):
         output = torch.cat([det_out, seg_out], dim=1)
 
         return output, protos
+
+
+# ----------------- YOLO human pose head -----------------
+class Pose(Detect):
+    def __init__(self, nc=80, kpt_shape=(17, 3), ch=()):
+        super().__init__(nc, ch)
+        self.kpt_shape = kpt_shape  # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
+        self.nk = kpt_shape[0] * kpt_shape[1]  # number of keypoints total
+        self.detect = Detect.forward
+
+        c4 = max(ch[0] // 4, self.nk)
+        self.cv4 = nn.ModuleList(
+            nn.Sequential(ConvModule(x,  c4, kernel_size=3),
+                          ConvModule(c4, c4, kernel_size=3),
+                          nn.Conv2d(c4, self.nk, 1))
+                          for x in ch)
+
+    def forward(self, x):
+        # ---------- Pose head ----------
+        # [bs, 17*3, h*w]
+        kpt_out = []
+        for i in range(self.nl):
+            # [bc, nk, h, w] -> [bs, nk, hw]
+            kpt = self.cv4[i](x[i]).flatten(2)
+            kpt_out.append(kpt)
+        kpt_out = torch.cat(kpt_out, dim=2)
+        
+        # ---------- BBox head output ----------
+        # [bs, 4+nc, m]
+        det_out = self.detect(self, x)
+
+        # decode kpt results
+        kpt_out = self.kpts_decode(kpt_out)
+
+        # [bs, 4 + nc + nk, m]
+        output = torch.cat([det_out, kpt_out], dim=1)
+
+        return output
+
+    def kpts_decode(self, kpts):
+        ndim = self.kpt_shape[1]
+        y = kpts.clone()
+
+        if ndim == 3:
+            y[:, 2::3] = y[:, 2::3].sigmoid()  # sigmoid (WARNING: inplace .sigmoid_() Apple MPS bug)
+
+        y[:, 0::ndim] = (y[:, 0::ndim] * 2.0 + (self.anchors[0] - 0.5)) * self.strides
+        y[:, 1::ndim] = (y[:, 1::ndim] * 2.0 + (self.anchors[1] - 0.5)) * self.strides
+
+        return y
