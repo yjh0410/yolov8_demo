@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from model.yolov8_det import Yolov8Detector
 
-model_scale = "n"
+model_scale = "s"
 ckpt = torch.load(f'checkpoints/official/yolov8{model_scale}.pt', map_location="cpu")
 yolov8 = ckpt.pop("model")
 yolov8 = yolov8.float()
