@@ -3,20 +3,20 @@ import cv2
 import torch
 import numpy as np
 
-from model.yolov8_pose import Yolov8Pose
+from model.yolo11_pose import Yolo11Pose
 from utils import post_process_pose, val_transform, scale_bboxes, scale_keypoints
 
 
 # build YOLO model
 model_scale = "n"
-yolov8 = Yolov8Pose(model_scale=model_scale, num_classes=1).eval()
+yolo11 = Yolo11Pose(model_scale=model_scale, num_classes=1).eval()
 
 # load ckpt
-ckpt = torch.load("checkpoints/yolov8{}_pose_ckpt.pth".format(model_scale), map_location="cpu")
-yolov8.load_state_dict(ckpt.pop("model"))
+ckpt = torch.load("checkpoints/yolo11{}_pose_ckpt.pth".format(model_scale), map_location="cpu")
+yolo11.load_state_dict(ckpt.pop("model"))
 
-num_kpt = yolov8.num_kepoints
-num_kdim = yolov8.num_kptdims
+num_kpt = yolo11.num_kepoints
+num_kdim = yolo11.num_kptdims
 
 # run the demo
 for file_name in os.listdir("data"):
@@ -30,7 +30,7 @@ for file_name in os.listdir("data"):
 
     # inference
     with torch.no_grad():
-        outputs = yolov8(x)
+        outputs = yolo11(x)
     xyxy_preds  = outputs[0, :4, :].permute(1, 0)
     score_preds = outputs[0, 4:5, :].permute(1, 0)
     pose_preds  = outputs[0, 5:, :].permute(1, 0)
